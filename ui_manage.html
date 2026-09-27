@@ -980,6 +980,7 @@ function _renderCountdownUI(c) {
   c = c || cfg.countdown || {};
   const enabledAttr  = c.enabled !== false ? 'checked' : '';
   const intervalVal  = c.interval_minutes || 60;
+  const maxDaysVal   = c.max_days_ahead ?? 100;
   document.getElementById('tab-countdown').innerHTML = `
     <div class="toggle-row">
       <span class="toggle-label">Enabled</span>
@@ -989,6 +990,11 @@ function _renderCountdownUI(c) {
       <label>Update every</label>
       <input type="number" id="cd-interval" value="${intervalVal}" min="10" max="1440">
       <span>minutes</span>
+    </div>
+    <div class="interval-row">
+      <label>Start showing</label>
+      <input type="number" id="cd-maxdays" value="${maxDaysVal}" min="0" max="3650">
+      <span>days before (0 = always)</span>
     </div>
     <div class="list-section">
       <div class="list-section-title">Events</div>
@@ -1041,6 +1047,7 @@ async function saveCountdown() {
   await saveSection('countdown', {
     enabled:          document.getElementById('cd-enabled').checked,
     interval_minutes: +document.getElementById('cd-interval').value,
+    max_days_ahead:   +document.getElementById('cd-maxdays').value,
     events:           _countdownEvents,
   });
 }

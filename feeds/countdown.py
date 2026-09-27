@@ -7,7 +7,8 @@ Events are configured in feeds/config.json under "countdown.events":
    {"name": "Mila's Birthday!", "date": "2026-06-13", "yearly": true}, ...]
 
 Past events are skipped, except "yearly" ones, which roll forward to their
-next anniversary. Events within 1 day show hours.
+next anniversary. Events more than "max_days_ahead" (default 100) away are
+not shown yet. Events within 1 day show hours.
 
 Usage:
     python3 feeds/countdown.py         # run on schedule
@@ -40,6 +41,9 @@ def get_events():
 
 def is_enabled():
     return load_config().get("countdown", {}).get("enabled", True)
+
+def get_max_days():
+    return load_config().get("countdown", {}).get("max_days_ahead", 100)
 
 def get_ttl():
     return load_config().get("countdown", {}).get("ttl_minutes", 65)
@@ -77,6 +81,7 @@ def send_all():
     board_url = get_board_url()
     events    = get_events()
     ttl       = get_ttl()
+    max_days  = get_max_days()
     today     = date.today()
 
     if not events:
@@ -100,6 +105,9 @@ def send_all():
             continue
         date_str = target.isoformat()
         delta = target - today
+        if max_days and delta.days > max_days:
+            log(f"'{name}' is {delta.days} days away — waiting until {max_days} days out")
+            continue
         if delta.days == 0:
             log(f"'{name}' is TODAY!")
 
