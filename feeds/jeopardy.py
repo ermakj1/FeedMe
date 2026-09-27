@@ -2,7 +2,7 @@
 """
 Jeopardy feed — sends real Jeopardy clues to the LED display.
 
-Questions come from the jwolle1 dataset on GitHub (530k clues, seasons 1-41).
+Questions come from the jwolle1 dataset on GitHub (530k+ clues, all seasons).
 On first run it downloads the TSV and builds a local sample cache (~5000 clues).
 Subsequent runs pick from the cache instantly.
 
@@ -42,9 +42,11 @@ def log(msg):
 
 CONFIG_PATH  = Path(__file__).parent / "config.json"
 CACHE_PATH   = DATA_DIR / ".jeopardy_cache.json"
+DATASET_REPO = "jwolle1/jeopardy_clue_dataset"
+# Fallback if the GitHub API lookup fails. The file is renamed each season
+# (combined_season1-41.tsv -> 1-42 ...), so we normally discover the name.
 DATASET_URL  = (
-    "https://raw.githubusercontent.com/jwolle1/jeopardy_clue_dataset"
-    "/main/combined_season1-41.tsv"
+    f"https://raw.githubusercontent.com/{DATASET_REPO}/main/combined_season1-42.tsv"
 )
 CACHE_SIZE   = 5000   # questions kept in local cache
 MIN_CLUE_LEN = 15     # skip very short/empty clues
@@ -138,9 +140,31 @@ def _row_to_clue(row):
     }
 
 
+def _dataset_url():
+    """Find the newest combined_season1-N.tsv in the dataset repo."""
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{DATASET_REPO}/contents",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            files = json.loads(resp.read())
+        combined = [
+            f for f in files
+            if f.get("name", "").startswith("combined_season1-") and f["name"].endswith(".tsv")
+        ]
+        if combined:
+            newest = max(combined, key=lambda f: int(f["name"][len("combined_season1-"):-4]))
+            return newest["download_url"]
+    except Exception as e:
+        log(f"Dataset lookup failed ({e}) — using fallback URL")
+    return DATASET_URL
+
+
 def _download_raw():
-    log("Downloading Jeopardy dataset from GitHub (~60 MB, one-time)...")
-    req = urllib.request.Request(DATASET_URL, headers={"User-Agent": "Mozilla/5.0"})
+    url = _dataset_url()
+    log(f"Downloading Jeopardy dataset {url.rsplit('/', 1)[-1]} (~60 MB, one-time)...")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
     log(f"Download complete ({len(raw) // 1024 // 1024} MB).")
