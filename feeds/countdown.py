@@ -16,14 +16,12 @@ Usage:
 
 import sys
 import time
-import json
 import argparse
 import traceback
 from datetime import datetime, date
 from pathlib import Path
-import urllib.request
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error, load_config
+from util import single_instance, is_network_error, load_config, post_json
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
@@ -72,14 +70,7 @@ def post_to_board(board_url, name, target_date, days, hours, ttl_minutes):
         "hours":       hours,
         "ttl_minutes": ttl_minutes,
     }
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        board_url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    return post_json(board_url, payload)
 
 
 def send_all():
@@ -118,25 +109,17 @@ def send_all():
         total_seconds = max(0, (target_dt - now).total_seconds())
         hours = int(total_seconds // 3600) if delta.days <= 1 else 0
 
-        for attempt in range(3):
-            try:
-                result = post_to_board(board_url, name, date_str, delta.days, hours, ttl)
-                log(f"Countdown '{name}': {delta.days}d {hours}h -> {result}")
-                break
-            except Exception as e:
-                if getattr(e, "code", None) == 429:
-                    if attempt < 2:
-                        log(f"Queue full — waiting 60s before retry {attempt + 1}/2 for '{name}'...")
-                        time.sleep(60)
-                    else:
-                        log(f"Queue still full after retries — skipping '{name}'")
-                elif is_network_error(e):
-                    log(f"Error: {is_network_error(e)}")
-                    break
-                else:
-                    log(f"Error sending '{name}': {e}")
-                    log(traceback.format_exc().strip())
-                    break
+        # post_json waits and retries if the board queue is full
+        try:
+            result = post_to_board(board_url, name, date_str, delta.days, hours, ttl)
+            log(f"Countdown '{name}': {delta.days}d {hours}h -> {result}")
+        except Exception as e:
+            friendly = is_network_error(e)
+            if friendly:
+                log(f"Error: {friendly}")
+            else:
+                log(f"Error sending '{name}': {e}")
+                log(traceback.format_exc().strip())
 
 
 def main():

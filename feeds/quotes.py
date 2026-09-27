@@ -4,16 +4,13 @@ Michael Scott Quote feed — posts a random quote on each interval.
 Cycles through all quotes before repeating any.
 """
 
-import json
 import random
 import time
-import urllib.request
-import urllib.error
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error, load_config
+from util import single_instance, is_network_error, load_config, post_json
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -54,19 +51,12 @@ QUOTES = [
 
 
 def post_quote(board_url, quote, ttl):
-    data = json.dumps({
+    payload = {
         "category": "quote",
         "text":     quote,
         "ttl_minutes": ttl,
-    }).encode()
-    req = urllib.request.Request(
-        f"{board_url}/add",
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read())
+    }
+    return post_json(f"{board_url}/add", payload, timeout=10)
 
 
 def main():

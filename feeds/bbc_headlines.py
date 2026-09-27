@@ -5,14 +5,10 @@ Saves tokens by moving logic from AI prompt to local Python.
 """
 import urllib.request
 import xml.etree.ElementTree as ET
-import subprocess
-import os
-import sys
 import time
 from datetime import datetime
-import json
 from pathlib import Path
-from util import single_instance, load_config
+from util import single_instance, load_config, post_json
 
 REPO_DIR = Path(__file__).parent.parent.resolve()
 CONFIG_PATH = REPO_DIR / "feeds" / "config.json"
@@ -55,15 +51,8 @@ def send_to_board(headline, cfg):
         "category": "news",
         "ttl_minutes": cfg.get("ttl_minutes", 125)
     }
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        get_board_url(), data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            json.loads(resp.read())
+        post_json(get_board_url(), payload)
         print(f"Sent: {headline}")
     except Exception as e:
         print(f"Failed to send headline: {e}")

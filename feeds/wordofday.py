@@ -21,7 +21,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error, load_config
+from util import single_instance, is_network_error, load_config, post_json
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
@@ -92,14 +92,7 @@ def post_to_board(board_url, word, pos, definition, ttl_minutes):
         "definition":  definition,
         "ttl_minutes": ttl_minutes,
     }
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        board_url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    return post_json(board_url, payload)
 
 
 def send_word():

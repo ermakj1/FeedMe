@@ -4,6 +4,7 @@ import json
 import time
 import socket
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 # Persistent storage for caches (Jeopardy dataset, images). In Docker this is a
@@ -31,6 +32,8 @@ def single_instance(name):
 
 def is_network_error(e):
     """Return a friendly message if e looks like a board-unreachable error, else None."""
+    if getattr(e, "code", None) == 429:
+        return "Board queue still full after retries — skipped"
     msg = str(e).lower()
     # Unwrap URLError to check the underlying reason
     reason = getattr(e, "reason", e)
@@ -63,3 +66,29 @@ def load_config():
         except (json.JSONDecodeError, OSError):
             time.sleep(0.2)
     return _last_good_config
+
+
+QUEUE_FULL_RETRIES   = 2
+QUEUE_FULL_WAIT_SECS = 60
+
+def post_json(url, payload, timeout=5, retries=QUEUE_FULL_RETRIES, wait=QUEUE_FULL_WAIT_SECS):
+    """POST JSON to the board and return the parsed reply.
+
+    If the board answers 429 (queue full), wait and retry up to `retries` times
+    before re-raising. Other errors are raised immediately.
+    """
+    data = json.dumps(payload).encode()
+    for attempt in range(retries + 1):
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code != 429 or attempt == retries:
+                raise
+            print(f"Board queue full — retrying in {wait}s ({attempt + 1}/{retries})", flush=True)
+            time.sleep(wait)

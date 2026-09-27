@@ -8,30 +8,21 @@ Usage:
 """
 
 import sys
-import json
 import argparse
-import urllib.request
 from pathlib import Path
 
 # Add feeds dir to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from util import is_network_error, load_config
+from util import is_network_error, load_config, post_json
 
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080") + "/add"
 
 def send_to_board(payload):
-    board_url = get_board_url()
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        board_url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read())
+        # No queue-full retry: callers (Director API, Hermes cron) expect a quick answer
+        return post_json(get_board_url(), payload, retries=0)
     except Exception as e:
         friendly = is_network_error(e)
         if friendly:

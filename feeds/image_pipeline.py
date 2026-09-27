@@ -19,6 +19,8 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
+from util import post_json
+
 BOARD_WIDTH  = 64
 BOARD_HEIGHT = 32
 CACHE_DIR    = Path(os.environ.get("FEEDME_DATA_DIR") or Path(__file__).parent) / ".image_cache"
@@ -92,14 +94,7 @@ def queue_bitmap(board_url, board_path, caption="", ttl_minutes=60):
         "caption":     caption,
         "ttl_minutes": ttl_minutes,
     }
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        board_url.rstrip("/") + "/add", data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    return post_json(board_url.rstrip("/") + "/add", payload)
 
 
 def is_cached_today(name):

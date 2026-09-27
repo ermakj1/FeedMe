@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error, load_config
+from util import single_instance, is_network_error, load_config, post_json
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
@@ -53,14 +53,7 @@ def post_joke(board_url, setup=None, delivery=None, text=None, ttl_minutes=10):
         payload["setup"] = setup
     if delivery:
         payload["delivery"] = delivery
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        board_url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    return post_json(board_url, payload)
 
 def send_one():
     board_url = get_board_url()

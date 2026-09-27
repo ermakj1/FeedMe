@@ -13,15 +13,13 @@ Usage:
 
 import sys
 import time
-import json
 import random
 import argparse
 import traceback
-import urllib.request
 from pathlib import Path
 from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error, load_config
+from util import single_instance, is_network_error, load_config, post_json
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
@@ -51,14 +49,7 @@ def send_animation(board_url, anim_type, duration=10):
         "ttl_minutes": 1,
         "max_plays":   1,
     }
-    data = json.dumps(payload).encode()
-    req  = urllib.request.Request(
-        board_url, data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    return post_json(board_url, payload, retries=0)
 
 def main():
     single_instance("animations")
