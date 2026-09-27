@@ -482,7 +482,36 @@ def serve_schema(request: Request):
                     "type": "string — fireworks | rainbow | dvd | dvd_text | matrix | plasma | fire | life | cube (default: fireworks)",
                     "duration": "number (optional) — seconds to run (default 10)"
                 }
+            },
+            "bitmap": {
+                "description": "64x32 BMP previously uploaded via /upload",
+                "fields": {"path": "string (required) — file path on the board", "caption": "string (optional)"}
+            },
+            "word": {
+                "description": "Word of the day",
+                "fields": {"word": "string (required)", "pos": "string (optional) — part of speech", "definition": "string (required)"}
+            },
+            "history": {
+                "description": "On this day in history",
+                "fields": {"year": "string (required)", "text": "string (required)"}
+            },
+            "countdown": {
+                "description": "Days/hours until an event",
+                "fields": {"name": "string (required)", "target_date": "YYYY-MM-DD", "days": "number", "hours": "number (0 unless <=1 day away)"}
+            },
+            "quote": {
+                "description": "Quote (Michael Scott feed)",
+                "fields": {"text": "string (required)"}
+            },
+            "jeopardy": {
+                "description": "Jeopardy clue, then the answer",
+                "fields": {"clue": "string (required)", "answer": "string (required)", "jeopardy_category": "string", "value": "number — dollar value"}
             }
+        },
+        "other_endpoints": {
+            "POST /interrupt": '{"text": "...", "duration": 5} — show immediately, then resume the queue',
+            "POST /time": '{"local_epoch": N} — set the clock (local wall-clock seconds since 1970)',
+            "POST /delete": '{"id": N}', "POST /reorder": '{"ids": [...]}', "POST /clear": "empty the queue"
         }
     }
     return Response(request, json.dumps(schema), content_type="application/json")
