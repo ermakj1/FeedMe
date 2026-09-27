@@ -7,6 +7,7 @@ serves the management web UI on port 8099, and handles motion callbacks
 from the Panel (MatrixPortal S3 LED board).
 """
 
+import calendar
 import json
 import os
 import queue as _queue
@@ -397,26 +398,61 @@ def _start_callback_server(cfg):
         _log(f"Could not start callback server: {e}")
         return None
 
-def _board_register(cfg, callback_url):
-    """Register callback URL with the board, retrying until it succeeds."""
-    board_url = cfg.get("board_url", "")
-    delay = 10
+REGISTER_EVERY_SECS = 60     # the board forgets its callback URL on every reboot
+TIME_PUSH_EVERY_SECS = 3600  # keep the board clock on local time (DST) and drift-free
+
+def _board_post(board_url, path, payload, timeout=5):
+    req = urllib.request.Request(
+        f"{board_url}{path}",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout):
+        pass
+
+def _local_epoch():
+    """Seconds since 1970 in local wall-clock time (what the board's RTC holds)."""
+    return int(calendar.timegm(datetime.now().timetuple()))
+
+def _board_sync_loop(callback_url):
+    """Keep the board's callback registration and clock current.
+
+    Re-registers every minute so motion callbacks survive board reboots, and
+    pushes local time hourly (and right after the board comes back) so the
+    clock follows DST. Logs only on state changes to keep the log quiet.
+    """
+    reachable  = None   # last known state, for change-only logging
+    time_ok    = None
+    last_time  = 0
     while True:
+        board_url = (_cfg_ref or load_config()).get("board_url", "")
         try:
-            req = urllib.request.Request(
-                f"{board_url}/register",
-                data=json.dumps({"url": callback_url}).encode(),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5):
-                pass
-            _log(f"Registered callback: {callback_url}")
-            return
+            _board_post(board_url, "/register", {"url": callback_url})
+            if reachable is not True:
+                _log(f"Registered callback with board: {callback_url}")
+                last_time = 0   # board may have just rebooted — resync its clock now
+            reachable = True
         except Exception as e:
-            _log(f"Callback registration failed: {e} — retrying in {delay}s")
-            time.sleep(delay)
-            delay = min(delay * 2, 120)  # back off up to 2 minutes
+            if reachable is not False:
+                _log(f"Board unreachable for callback registration: {e}")
+            reachable = False
+
+        if reachable and time.time() - last_time >= TIME_PUSH_EVERY_SECS:
+            try:
+                _board_post(board_url, "/time", {"local_epoch": _local_epoch()})
+                last_time = time.time()
+                if time_ok is not True:
+                    _log("Board clock synced from Director")
+                time_ok = True
+            except Exception as e:
+                # Boards older than v1.9 have no /time endpoint — retry next hour
+                last_time = time.time()
+                if time_ok is not False:
+                    _log(f"Board clock sync failed: {e}")
+                time_ok = False
+
+        time.sleep(REGISTER_EVERY_SECS)
 
 def _board_unregister(cfg):
     board_url = cfg.get("board_url", "")
@@ -774,7 +810,7 @@ def main():
 
     callback_url = _start_callback_server(cfg)
     if callback_url:
-        threading.Thread(target=_board_register, args=(cfg, callback_url), daemon=True).start()
+        threading.Thread(target=_board_sync_loop, args=(callback_url,), daemon=True).start()
 
     print("Starting feeds...", flush=True)
     time.sleep(1)
