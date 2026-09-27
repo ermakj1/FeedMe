@@ -173,3 +173,22 @@ ui_manage.html  Director web UI
 Dockerfile      Director container definition
 docker-compose.yml
 ```
+
+---
+
+## Known-good baseline (rollback point)
+
+As of **2026-09-27** the project was working pretty well overall, with the
+occasional random Panel crash/freeze over the previous few months (mostly
+suspected WiFi drops in the garage and unhandled exceptions in the main loop).
+
+That state is tagged **`baseline-2026-09-27`** (commit `0832a69`). A batch of
+stability/cleanup changes was started after this point (see GitHub issues
+opened on 2026-09-27). If those changes make things worse, roll back with:
+
+```bash
+git checkout baseline-2026-09-27 -- board/ manage.py feeds/ ui_manage.html
+```
+
+Then redeploy the Panel (`scripts/deploy.sh`) and the Director
+(`scripts/update-director.sh` on the Pi after committing/pushing).
