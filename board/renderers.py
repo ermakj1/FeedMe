@@ -30,10 +30,11 @@ _btn_down        = None
 _last_motion_ref = None  # mutable list [float] shared with code.py
 _sleep_timeout   = None
 _interrupt_ref   = None  # mutable list [bool] shared with code.py — set True to preempt render
+_watchdog        = None  # microcontroller.watchdog, fed on every _poll()
 
 
-def init(display, server, pir, btn_up, btn_down, last_motion_ref, sleep_timeout, interrupt_ref=None):
-    global _display, _server, _pir, _btn_up, _btn_down, _last_motion_ref, _sleep_timeout, _interrupt_ref
+def init(display, server, pir, btn_up, btn_down, last_motion_ref, sleep_timeout, interrupt_ref=None, watchdog=None):
+    global _display, _server, _pir, _btn_up, _btn_down, _last_motion_ref, _sleep_timeout, _interrupt_ref, _watchdog
     _display         = display
     _server          = server
     _pir             = pir
@@ -42,6 +43,7 @@ def init(display, server, pir, btn_up, btn_down, last_motion_ref, sleep_timeout,
     _last_motion_ref = last_motion_ref
     _sleep_timeout   = sleep_timeout
     _interrupt_ref   = interrupt_ref
+    _watchdog        = watchdog
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +52,8 @@ def init(display, server, pir, btn_up, btn_down, last_motion_ref, sleep_timeout,
 
 def _poll():
     """Poll server, update PIR timestamp, check buttons. Returns action or None."""
+    if _watchdog is not None:
+        _watchdog.feed()
     _server.poll()
     if _pir.value:
         _last_motion_ref[0] = time.monotonic()

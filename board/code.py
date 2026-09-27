@@ -1,4 +1,4 @@
-VERSION = "1.8"
+VERSION = "1.9"
 
 # MatrixPortal S3 - scrolling message queue with HTTP API
 #
@@ -6,6 +6,7 @@ VERSION = "1.8"
 # POST /clear     clears the queue
 # POST /interrupt {"text": "...", "duration": 5} — preempt display, then resume queue
 # POST /register  {"url": "..."} — register callback URL for board events
+# POST /time      {"local_epoch": N} — set the clock (Director pushes hourly)
 # GET  /          returns current queue as JSON
 #
 # UP button: skip current message
@@ -46,6 +47,9 @@ GREETINGS_ENABLED          = False # disabled — greetings removed per user req
 HEARTBEAT_SECONDS          = 60    # log a heartbeat this often while sleeping
 PRESENCE_HEARTBEAT_MINUTES = 5     # send "motion" callback this often while room is occupied
 LOG_MAX_LINES         = 100
+WATCHDOG_SECONDS      = 120    # hardware reset if the main loop/renderers stop polling this long (0 = off)
+WIFI_CHECK_SECONDS    = 15     # how often the main loop checks the WiFi link
+LOOP_ERRORS_BEFORE_RELOAD = 5  # main-loop exceptions within 60s before soft-reloading
 # Buttons: UP wakes from sleep / skips message. DOWN sleeps immediately.
 
 # --- Log buffer ---
@@ -111,11 +115,22 @@ def pir_active():
 
 # --- WiFi + NTP ---
 
+def wifi_connect():
+    wifi.radio.connect(
+        os.getenv("CIRCUITPY_WIFI_SSID"),
+        os.getenv("CIRCUITPY_WIFI_PASSWORD"),
+    )
+
 log("Connecting to WiFi...")
-wifi.radio.connect(
-    os.getenv("CIRCUITPY_WIFI_SSID"),
-    os.getenv("CIRCUITPY_WIFI_PASSWORD"),
-)
+_wifi_delay = 2
+while True:
+    try:
+        wifi_connect()
+        break
+    except Exception as e:
+        log(f"WiFi connect failed: {e} — retrying in {_wifi_delay}s")
+        time.sleep(_wifi_delay)
+        _wifi_delay = min(_wifi_delay * 2, 30)
 log(f"Connected: {wifi.radio.ipv4_address}")
 
 pool = socketpool.SocketPool(wifi.radio)
@@ -228,8 +243,9 @@ def register(request: Request):
         url = str(data.get("url", "")).strip()
         if not url:
             return Response(request, '{"ok":false,"reason":"missing url"}', content_type="application/json", status=(400, "Bad Request"))
+        if url != callback_url:   # Director re-registers every minute; only log changes
+            log(f"Registered callback: {url}")
         callback_url = url
-        log(f"Registered callback: {callback_url}")
         return Response(request, '{"ok":true}', content_type="application/json")
     except Exception as e:
         return Response(request, json.dumps({"ok": False, "reason": str(e)}), content_type="application/json", status=(400, "Bad Request"))
@@ -298,6 +314,21 @@ def interrupt_display(request: Request):
         _interrupt_msg   = {"text": text, "duration": duration}
         _interrupt_ref[0] = True
         log(f"Interrupt requested: \"{text}\" for {duration}s")
+        return Response(request, '{"ok":true}', content_type="application/json")
+    except Exception as e:
+        return Response(request, json.dumps({"ok": False, "reason": str(e)}), content_type="application/json", status=(400, "Bad Request"))
+
+@server.route("/time", "POST")
+def set_time(request: Request):
+    # {"local_epoch": <seconds since 1970 in local wall-clock time>} — pushed
+    # hourly by the Director so the clock follows DST and doesn't drift.
+    try:
+        epoch = int(json.loads(request.body)["local_epoch"])
+        before = time.localtime()
+        rtc.RTC().datetime = time.localtime(epoch)
+        after = time.localtime()
+        if (before.tm_hour, before.tm_min) != (after.tm_hour, after.tm_min):
+            log(f"Time set: {after.tm_hour:02}:{after.tm_min:02}")
         return Response(request, '{"ok":true}', content_type="application/json")
     except Exception as e:
         return Response(request, json.dumps({"ok": False, "reason": str(e)}), content_type="application/json", status=(400, "Bad Request"))
@@ -557,7 +588,25 @@ if not PIR_ENABLED:
 
 # --- Renderers init ---
 
-renderers.init(display, server, pir, btn_up, btn_down, last_motion_ref, SLEEP_TIMEOUT_SECONDS, _interrupt_ref)
+# --- Hardware watchdog ---
+# Resets the board if nothing feeds it for WATCHDOG_SECONDS (hung render, stuck
+# socket, etc.). Fed by the main loop and by renderers._poll().
+
+wdt = None
+if WATCHDOG_SECONDS:
+    try:
+        import microcontroller
+        from watchdog import WatchDogMode
+        wdt = microcontroller.watchdog
+        wdt.timeout = WATCHDOG_SECONDS
+        wdt.mode = WatchDogMode.RESET
+        wdt.feed()
+        log(f"Watchdog armed ({WATCHDOG_SECONDS}s)")
+    except Exception as e:
+        wdt = None
+        log(f"Watchdog unavailable: {e}")
+
+renderers.init(display, server, pir, btn_up, btn_down, last_motion_ref, SLEEP_TIMEOUT_SECONDS, _interrupt_ref, wdt)
 
 # --- Helpers ---
 
@@ -591,6 +640,39 @@ def _run_interrupt():
     _crumb_clear()
     clear_display()
 
+_last_wifi_check = time.monotonic()
+
+def check_wifi():
+    """Reconnect WiFi (and rebind the HTTP server) if the link dropped."""
+    global _last_wifi_check
+    now = time.monotonic()
+    if now - _last_wifi_check < WIFI_CHECK_SECONDS:
+        return
+    _last_wifi_check = now
+    connected = getattr(wifi.radio, "connected", None)
+    if connected is None:
+        connected = wifi.radio.ipv4_address is not None
+    if connected:
+        return
+    log("WiFi lost — reconnecting")
+    try:
+        wifi_connect()
+    except Exception as e:
+        log(f"WiFi reconnect failed: {e}")
+        return
+    log(f"WiFi reconnected: {wifi.radio.ipv4_address}")
+    try:
+        server.stop()
+    except Exception:
+        pass
+    try:
+        server.start(str(wifi.radio.ipv4_address), port=8080)
+    except Exception as e:
+        # Can't rebind cleanly — a soft reload gets a fresh socket pool
+        log(f"Server restart failed: {e} — reloading")
+        time.sleep(0.2)
+        supervisor.reload()
+
 # --- Main loop ---
 
 # If a render breadcrumb exists from a previous boot, a hard crash occurred there
@@ -605,182 +687,208 @@ except OSError:
 clear_display()
 log(f"Ready  v{VERSION}")
 
+_loop_errors     = 0
+_last_loop_error = 0
+
 while True:
-    server.poll()
+    try:
+        if wdt is not None:
+            wdt.feed()
+        check_wifi()
 
-    if _pending_reload:
-        log("Reloading...")
-        time.sleep(0.2)
-        supervisor.reload()
+        server.poll()
 
-    if _pending_wake and asleep:
-        _pending_wake = False
-        log("Woken via web")
-        asleep = False
-        sleep_start = None
-        last_motion_ref[0] = time.monotonic()
-    elif _pending_wake:
-        _pending_wake = False
+        if _pending_reload:
+            log("Reloading...")
+            time.sleep(0.2)
+            supervisor.reload()
 
-    if pir_active() and time.monotonic() >= _sleep_mute_until:
-        if asleep:
-            slept = int(time.monotonic() - sleep_start) if sleep_start else 0
-            log(f"Motion detected — waking up (slept {slept}s)")
-            asleep      = False
-            sleep_start = None
-            notify_callback("person_detected")
-            if GREETINGS_ENABLED:
-                _crumb_write("greeting")
-                result = renderers.render_greeting(greeting_text())
-                _crumb_clear()
-                clear_display()
-                if result == "sleep":
-                    asleep = True
-                elif result == "clear":
-                    message_queue.clear()
-                    time.sleep(0.3)
-        last_motion_ref[0] = time.monotonic()
-
-    # Presence heartbeat — fire "motion" callback periodically while room is occupied
-    if not asleep and PIR_ENABLED:
-        now = time.monotonic()
-        if (now - last_motion_ref[0] < SLEEP_TIMEOUT_SECONDS and
-                now - _last_presence_heartbeat >= PRESENCE_HEARTBEAT_MINUTES * 60):
-            _last_presence_heartbeat = now
-            log("Presence heartbeat")
-            notify_callback("motion")
-
-    if PIR_ENABLED and not asleep and time.monotonic() - last_motion_ref[0] > SLEEP_TIMEOUT_SECONDS:
-        log(f"No motion for {SLEEP_TIMEOUT_SECONDS}s — sleeping")
-        clear_display()
-        asleep              = True
-        sleep_start         = time.monotonic()
-        last_heartbeat      = time.monotonic()
-        _heartbeat_interval = HEARTBEAT_SECONDS
-
-    if asleep:
-        now = time.monotonic()
-        if now - last_heartbeat >= _heartbeat_interval:
-            log(f"Still sleeping... ({int(now - sleep_start)}s)")
-            last_heartbeat      = now
-            _heartbeat_interval = min(_heartbeat_interval * 2, 3600)
-        if not btn_up.value:
-            slept = int(time.monotonic() - sleep_start) if sleep_start else 0
-            log(f"Woken by UP button (slept {slept}s)")
+        if _pending_wake and asleep:
+            _pending_wake = False
+            log("Woken via web")
             asleep = False
             sleep_start = None
             last_motion_ref[0] = time.monotonic()
-            notify_callback("person_detected")
-            if GREETINGS_ENABLED:
-                _crumb_write("greeting")
-                result = renderers.render_greeting(greeting_text())
-                _crumb_clear()
-                clear_display()
-                if result == "clear":
-                    message_queue.clear()
+        elif _pending_wake:
+            _pending_wake = False
+
+        if pir_active() and time.monotonic() >= _sleep_mute_until:
+            if asleep:
+                slept = int(time.monotonic() - sleep_start) if sleep_start else 0
+                log(f"Motion detected — waking up (slept {slept}s)")
+                asleep      = False
+                sleep_start = None
+                notify_callback("person_detected")
+                if GREETINGS_ENABLED:
+                    _crumb_write("greeting")
+                    result = renderers.render_greeting(greeting_text())
+                    _crumb_clear()
+                    clear_display()
+                    if result == "sleep":
+                        asleep = True
+                    elif result == "clear":
+                        message_queue.clear()
+                        time.sleep(0.3)
+            last_motion_ref[0] = time.monotonic()
+
+        # Presence heartbeat — fire "motion" callback periodically while room is occupied
+        if not asleep and PIR_ENABLED:
+            now = time.monotonic()
+            if (now - last_motion_ref[0] < SLEEP_TIMEOUT_SECONDS and
+                    now - _last_presence_heartbeat >= PRESENCE_HEARTBEAT_MINUTES * 60):
+                _last_presence_heartbeat = now
+                log("Presence heartbeat")
+                notify_callback("motion")
+
+        if PIR_ENABLED and not asleep and time.monotonic() - last_motion_ref[0] > SLEEP_TIMEOUT_SECONDS:
+            log(f"No motion for {SLEEP_TIMEOUT_SECONDS}s — sleeping")
+            clear_display()
+            asleep              = True
+            sleep_start         = time.monotonic()
+            last_heartbeat      = time.monotonic()
+            _heartbeat_interval = HEARTBEAT_SECONDS
+
+        if asleep:
+            now = time.monotonic()
+            if now - last_heartbeat >= _heartbeat_interval:
+                log(f"Still sleeping... ({int(now - sleep_start)}s)")
+                last_heartbeat      = now
+                _heartbeat_interval = min(_heartbeat_interval * 2, 3600)
+            if not btn_up.value:
+                slept = int(time.monotonic() - sleep_start) if sleep_start else 0
+                log(f"Woken by UP button (slept {slept}s)")
+                asleep = False
+                sleep_start = None
+                last_motion_ref[0] = time.monotonic()
+                notify_callback("person_detected")
+                if GREETINGS_ENABLED:
+                    _crumb_write("greeting")
+                    result = renderers.render_greeting(greeting_text())
+                    _crumb_clear()
+                    clear_display()
+                    if result == "clear":
+                        message_queue.clear()
+                time.sleep(0.3)
+            server.poll()
+            time.sleep(0.1)
+            continue
+
+        if not btn_down.value:
+            log("DOWN button — sleeping")
+            clear_display()
+            asleep              = True
+            sleep_start         = time.monotonic()
+            last_heartbeat      = time.monotonic()
+            _heartbeat_interval = HEARTBEAT_SECONDS
+            _sleep_mute_until   = time.monotonic() + SLEEP_MUTE_SECONDS
             time.sleep(0.3)
-        server.poll()
-        time.sleep(0.1)
-        continue
+            continue
 
-    if not btn_down.value:
-        log("DOWN button — sleeping")
-        clear_display()
-        asleep              = True
-        sleep_start         = time.monotonic()
-        last_heartbeat      = time.monotonic()
-        _heartbeat_interval = HEARTBEAT_SECONDS
-        _sleep_mute_until   = time.monotonic() + SLEEP_MUTE_SECONDS
-        time.sleep(0.3)
-        continue
+        if not btn_up.value:
+            last_motion_ref[0] = time.monotonic()  # reset inactivity timer
+            time.sleep(0.3)
+            continue
 
-    if not btn_up.value:
-        last_motion_ref[0] = time.monotonic()  # reset inactivity timer
-        time.sleep(0.3)
-        continue
-
-    # Interrupt — preempts whatever is currently displayed
-    if _interrupt_ref[0] and _interrupt_msg is not None:
-        _run_interrupt()
-
-    purge_expired()
-
-    # Periodically show the clock even when messages are queued
-    if message_queue and _msgs_since_clock >= CLOCK_BREAK_EVERY:
-        _msgs_since_clock = 0
-        log("Clock break")
-        break_end = time.monotonic() + CLOCK_BREAK_SECS
-        _crumb_write("clock")
-        while time.monotonic() < break_end:
-            try:
-                action = renderers.render_clock()
-            except Exception as e:
-                _write_crash("clock", e)
-                action = "done"
-            if action == "interrupt":
-                break
-            elif action == "sleep":
-                asleep      = True
-                sleep_start = time.monotonic()
-                break
-            elif action == "clear":
-                message_queue.clear()
-                break
-        _crumb_clear()
+        # Interrupt — preempts whatever is currently displayed
         if _interrupt_ref[0] and _interrupt_msg is not None:
             _run_interrupt()
 
-    if message_queue:
-        msg = message_queue.pop(0)
-        if time.monotonic() >= msg["expires_at"]:
-            log(f"Skipping expired [{msg.get('category','')}]: {_msg_summary(msg)}")
-            continue
-        current_msg = msg
-        log(f"Displaying [{msg.get('category','')}]: {_msg_summary(msg)}")
-        _crumb_write(msg.get("category", "?"))
-        try:
-            result = renderers.render(msg)
-        except Exception as e:
-            _write_crash(msg.get("category", "?"), e)
-            result = "done"
+        purge_expired()
+
+        # Periodically show the clock even when messages are queued
+        if message_queue and _msgs_since_clock >= CLOCK_BREAK_EVERY:
+            _msgs_since_clock = 0
+            log("Clock break")
+            break_end = time.monotonic() + CLOCK_BREAK_SECS
+            _crumb_write("clock")
+            while time.monotonic() < break_end:
+                try:
+                    action = renderers.render_clock()
+                except Exception as e:
+                    _write_crash("clock", e)
+                    action = "done"
+                if action == "interrupt":
+                    break
+                elif action == "sleep":
+                    asleep      = True
+                    sleep_start = time.monotonic()
+                    break
+                elif action == "clear":
+                    message_queue.clear()
+                    break
+            _crumb_clear()
+            if _interrupt_ref[0] and _interrupt_msg is not None:
+                _run_interrupt()
+
+        if message_queue:
+            msg = message_queue.pop(0)
+            if time.monotonic() >= msg["expires_at"]:
+                log(f"Skipping expired [{msg.get('category','')}]: {_msg_summary(msg)}")
+                continue
+            current_msg = msg
+            log(f"Displaying [{msg.get('category','')}]: {_msg_summary(msg)}")
+            _crumb_write(msg.get("category", "?"))
+            try:
+                result = renderers.render(msg)
+            except Exception as e:
+                _write_crash(msg.get("category", "?"), e)
+                result = "done"
+            _crumb_clear()
+            current_msg = None
+            _msgs_since_clock += 1
+            clear_display()
+            if result == "interrupt":
+                # Put the preempted message back at the front of the queue, then show interrupt
+                message_queue.insert(0, msg)
+                _run_interrupt()
+                continue
+            elif result == "sleep":
+                log("No motion mid-display — sleeping")
+                asleep         = True
+                sleep_start    = time.monotonic()
+                last_heartbeat = time.monotonic()
+            elif result == "clear":
+                message_queue.clear()
+                log("Queue cleared by button")
+                time.sleep(0.3)
+            elif result == "done":
+                msg["plays"] = msg.get("plays", 0) + 1
+                max_plays = msg.get("max_plays", None)
+                still_valid = (
+                    time.monotonic() < msg["expires_at"]
+                    and msg.get("id") not in _deleted_ids
+                    and (max_plays is None or msg["plays"] < max_plays)
+                )
+                if still_valid:
+                    message_queue.append(msg)
+                elif max_plays is not None and msg["plays"] >= max_plays:
+                    log(f"Max plays reached [{msg.get('category','')}]: {_msg_summary(msg)}")
+        else:
+            result = renderers.render_clock()
+            if result == "interrupt":
+                _run_interrupt()
+            elif result == "clear":
+                message_queue.clear()
+            elif result == "sleep":
+                clear_display()
+                asleep         = True
+                sleep_start    = time.monotonic()
+                last_heartbeat = time.monotonic()
+
+    except KeyboardInterrupt:
+        if wdt is not None:
+            wdt.deinit()   # don't reset the board while someone is at the REPL
+        raise
+    except Exception as e:
+        # Previously any uncaught error here ended code.py and froze the panel.
+        now = time.monotonic()
+        _loop_errors = _loop_errors + 1 if now - _last_loop_error < 60 else 1
+        _last_loop_error = now
+        _write_crash("main loop", e)
         _crumb_clear()
         current_msg = None
-        _msgs_since_clock += 1
-        clear_display()
-        if result == "interrupt":
-            # Put the preempted message back at the front of the queue, then show interrupt
-            message_queue.insert(0, msg)
-            _run_interrupt()
-            continue
-        elif result == "sleep":
-            log("No motion mid-display — sleeping")
-            asleep         = True
-            sleep_start    = time.monotonic()
-            last_heartbeat = time.monotonic()
-        elif result == "clear":
-            message_queue.clear()
-            log("Queue cleared by button")
-            time.sleep(0.3)
-        elif result == "done":
-            msg["plays"] = msg.get("plays", 0) + 1
-            max_plays = msg.get("max_plays", None)
-            still_valid = (
-                time.monotonic() < msg["expires_at"]
-                and msg.get("id") not in _deleted_ids
-                and (max_plays is None or msg["plays"] < max_plays)
-            )
-            if still_valid:
-                message_queue.append(msg)
-            elif max_plays is not None and msg["plays"] >= max_plays:
-                log(f"Max plays reached [{msg.get('category','')}]: {_msg_summary(msg)}")
-    else:
-        result = renderers.render_clock()
-        if result == "interrupt":
-            _run_interrupt()
-        elif result == "clear":
-            message_queue.clear()
-        elif result == "sleep":
-            clear_display()
-            asleep         = True
-            sleep_start    = time.monotonic()
-            last_heartbeat = time.monotonic()
+        if _loop_errors >= LOOP_ERRORS_BEFORE_RELOAD:
+            log(f"{_loop_errors} main-loop errors in a minute — reloading")
+            time.sleep(0.5)
+            supervisor.reload()
+        time.sleep(1)
