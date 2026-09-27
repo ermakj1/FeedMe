@@ -21,7 +21,7 @@ from pathlib import Path
 
 BOARD_WIDTH  = 64
 BOARD_HEIGHT = 32
-CACHE_DIR    = Path(__file__).parent / ".image_cache"
+CACHE_DIR    = Path(os.environ.get("FEEDME_DATA_DIR") or Path(__file__).parent) / ".image_cache"
 
 
 def fetch_image(url, headers=None):

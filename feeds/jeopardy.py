@@ -35,13 +35,13 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error
+from util import single_instance, is_network_error, DATA_DIR, load_config
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
 
 CONFIG_PATH  = Path(__file__).parent / "config.json"
-CACHE_PATH   = Path(__file__).parent / ".jeopardy_cache.json"
+CACHE_PATH   = DATA_DIR / ".jeopardy_cache.json"
 DATASET_URL  = (
     "https://raw.githubusercontent.com/jwolle1/jeopardy_clue_dataset"
     "/main/combined_season1-41.tsv"
@@ -51,11 +51,6 @@ MIN_CLUE_LEN = 15     # skip very short/empty clues
 MAX_CLUE_LEN = 200    # skip clues too long to be useful
 
 
-def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080") + "/add"
@@ -84,7 +79,7 @@ def is_celebrity_only():
 
 # ── Cache management ──────────────────────────────────────────────────────────
 
-CELEB_CACHE_PATH = Path(__file__).parent / ".jeopardy_celebrity_cache.json"
+CELEB_CACHE_PATH = DATA_DIR / ".jeopardy_celebrity_cache.json"
 
 def _clean(text):
     """Unescape HTML and normalize quotes/dashes for the LED display."""

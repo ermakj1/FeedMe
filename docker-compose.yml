@@ -17,8 +17,10 @@ services:
     environment:
       - TZ=America/Los_Angeles
       - PYTHONUTF8=1
+      - FEEDME_DATA_DIR=/app/data
     volumes:
       - ./feeds/config.json:/app/feeds/config.json
+      - ./data:/app/data   # caches that should survive rebuilds (Jeopardy dataset, images)
     ports:
       - "8090:8090"
       - "8099:8099"

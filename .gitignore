@@ -9,3 +9,4 @@ feeds/.*.lock
 feeds/.image_cache/
 feeds/config.json
 scripts/.*.json
+data/
