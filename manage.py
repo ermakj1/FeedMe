@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -719,19 +720,45 @@ def api_hermes_push():
         if int_key in data and not isinstance(data[int_key], int):
             return jsonify({"ok": False, "reason": f"{int_key} must be an integer"}), 400
 
-    # Construct command for hermes.py
-    cmd = [sys.executable, str(REPO_DIR / "feeds" / "hermes.py")]
-    if text:
-        cmd.append(text)
-    for key in ["category", "type", "duration", "ttl"]:
-        if key in data:
-            cmd.extend([f"--{key}", str(data[key])])
+    category = str(data.get("category", "text"))
+    if not text and category != "animation":
+        return jsonify({"ok": False, "reason": "text is required"}), 400
+
+    if data.get("interrupt"):
+        # Show immediately (preempts the current message), then the queue resumes
+        if not text:
+            return jsonify({"ok": False, "reason": "interrupt needs text"}), 400
+        path    = "/interrupt"
+        payload = {"text": text, "duration": data.get("duration", 8)}
+    else:
+        path    = "/add"
+        payload = {"category": category, "ttl_minutes": data.get("ttl", 60)}
+        if text:
+            payload["text"] = text
+        if "type" in data:
+            payload["type"] = str(data["type"])
+        if "duration" in data:
+            payload["duration"] = data["duration"]
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
-        return jsonify({"ok": True})
-    except subprocess.CalledProcessError as e:
-        return jsonify({"ok": False, "reason": e.stderr.decode() or str(e)}), 500
+        req = urllib.request.Request(
+            _board_url() + path,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return jsonify({"ok": True, "board": json.loads(r.read())})
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            reason = "board queue is full"
+        elif e.code == 404 and path == "/interrupt":
+            reason = "panel firmware too old for Show now — deploy board v1.9"
+        else:
+            reason = f"board returned HTTP {e.code}"
+        return jsonify({"ok": False, "reason": reason}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "reason": f"board unreachable: {e}"}), 502
 
 def _board_url():
     cfg = _cfg_ref or load_config()

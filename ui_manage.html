@@ -1167,6 +1167,7 @@ function renderHermes() {
           <option value="news">News Headline</option>
         </select>
         <button class="btn btn-primary" onclick="pushHermesMessage()">Push Message</button>
+        <button class="btn btn-secondary" title="Interrupt the display and show it right away" onclick="pushHermesMessage(true)">Show Now</button>
       </div>
     </div>
     
@@ -1188,20 +1189,20 @@ async function saveHermes() {
   await saveSection('hermes', { ...cfg.hermes, enabled: document.getElementById('h-enabled').checked });
 }
 
-async function pushHermesMessage() {
+async function pushHermesMessage(interrupt = false) {
   const msg = document.getElementById('h-msg-input').value.trim();
   if (!msg) return;
   const cat = document.getElementById('h-msg-cat').value;
-  toast('Pushing message...', 'ok');
+  toast(interrupt ? 'Showing now...' : 'Pushing message...', 'ok');
   try {
     const r = await fetch('/api/hermes/push', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text: msg, category: cat})
+      body: JSON.stringify({text: msg, category: cat, interrupt})
     });
     const d = await r.json();
     if (d.ok) {
-      toast('Message pushed!', 'ok');
+      toast(interrupt ? 'Showing on board!' : 'Message pushed!', 'ok');
       document.getElementById('h-msg-input').value = '';
     } else {
       toast('Failed: ' + d.reason, 'err');
