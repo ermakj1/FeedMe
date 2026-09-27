@@ -12,16 +12,11 @@ import time
 from datetime import datetime
 import json
 from pathlib import Path
-from util import single_instance
+from util import single_instance, load_config
 
 REPO_DIR = Path(__file__).parent.parent.resolve()
 CONFIG_PATH = REPO_DIR / "feeds" / "config.json"
 
-def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080") + "/add"

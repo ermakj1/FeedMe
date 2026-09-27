@@ -19,7 +19,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error
+from util import single_instance, is_network_error, load_config
 from image_pipeline import process_image
 
 def log(msg):
@@ -29,11 +29,6 @@ CONFIG_PATH  = Path(__file__).parent / "config.json"
 BOARD_PATH   = "/bitmaps/nasa.bmp"   # path on board filesystem
 IMAGE_NAME   = "nasa_apod"
 
-def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080")

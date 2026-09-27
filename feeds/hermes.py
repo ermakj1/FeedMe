@@ -15,14 +15,8 @@ from pathlib import Path
 
 # Add feeds dir to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
-from util import is_network_error
+from util import is_network_error, load_config
 
-def load_config():
-    config_path = Path(__file__).parent / "config.json"
-    if config_path.exists():
-        with open(config_path) as f:
-            return json.load(f)
-    return {}
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080") + "/add"

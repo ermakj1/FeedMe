@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error
+from util import single_instance, is_network_error, load_config
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -51,11 +51,6 @@ QUOTES = [
 ]
 
 
-def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
 
 
 def post_quote(board_url, quote, ttl):

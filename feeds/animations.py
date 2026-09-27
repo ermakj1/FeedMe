@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
-from util import single_instance, is_network_error
+from util import single_instance, is_network_error, load_config
 
 def log(msg):
     print(f"{datetime.now().strftime('%H:%M:%S')}  {msg}", flush=True)
@@ -30,11 +30,6 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 
 ALL_TYPES = ["fireworks", "rainbow", "plasma", "fire", "life", "cube", "dvd", "dvd_text", "matrix"]
 
-def load_config():
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    return {}
 
 def get_board_url():
     return load_config().get("board_url", "http://matrixportal.local:8080") + "/add"
