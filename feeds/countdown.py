@@ -3,9 +3,11 @@
 Countdown feed — shows days remaining until configured events.
 
 Events are configured in feeds/config.json under "countdown.events":
-  [{"name": "Vacation", "date": "2026-07-04"}, ...]
+  [{"name": "Vacation", "date": "2026-07-04"},
+   {"name": "Mila's Birthday!", "date": "2026-06-13", "yearly": true}, ...]
 
-Past events are automatically skipped. Events within 1 day show hours.
+Past events are skipped, except "yearly" ones, which roll forward to their
+next anniversary. Events within 1 day show hours.
 
 Usage:
     python3 feeds/countdown.py         # run on schedule
@@ -43,6 +45,22 @@ def is_enabled():
 
 def get_ttl():
     return load_config().get("countdown", {}).get("ttl_minutes", 65)
+
+
+def next_occurrence(target, today, yearly):
+    """Return the date to count down to, or None if a one-off event has passed."""
+    if target >= today:
+        return target
+    if not yearly:
+        return None
+    for year in (today.year, today.year + 1):
+        try:
+            candidate = target.replace(year=year)
+        except ValueError:               # Feb 29 in a non-leap year
+            candidate = date(year, 2, 28)
+        if candidate >= today:
+            return candidate
+    return None
 
 
 def post_to_board(board_url, name, target_date, days, hours, ttl_minutes):
@@ -85,10 +103,12 @@ def send_all():
             log(f"Invalid date for '{name}': {date_str}")
             continue
 
-        delta = target - today
-        if delta.days < 0:
+        target = next_occurrence(target, today, event.get("yearly", False))
+        if target is None:
             log(f"'{name}' already passed ({date_str}) — skipping")
             continue
+        date_str = target.isoformat()
+        delta = target - today
         if delta.days == 0:
             log(f"'{name}' is TODAY!")
 

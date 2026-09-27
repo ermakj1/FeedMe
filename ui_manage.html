@@ -995,8 +995,11 @@ function _renderCountdownUI(c) {
       <div id="cd-event-list">
         ${_countdownEvents.length ? _countdownEvents.map((e,i) => `
           <div class="list-item">
-            <span>${e.name} — ${e.date}</span>
-            <button class="btn btn-xs btn-danger" onclick="removeCountdownEvent(${i})">&#10005;</button>
+            <span>${e.name} — ${e.date}${e.yearly ? ' <span title="Repeats every year">&#8635; yearly</span>' : ''}</span>
+            <span>
+              <button class="btn btn-xs" title="Toggle repeat every year" onclick="toggleCountdownYearly(${i})">&#8635;</button>
+              <button class="btn btn-xs btn-danger" onclick="removeCountdownEvent(${i})">&#10005;</button>
+            </span>
           </div>`).join('') : '<p class="empty-msg">No events added</p>'}
       </div>
     </div>
@@ -1005,6 +1008,7 @@ function _renderCountdownUI(c) {
       <div class="add-row">
         <input type="text"  id="cd-name" placeholder="Event name" style="flex:2">
         <input type="date"  id="cd-date" style="flex:1">
+        <label title="Repeats every year (birthdays, holidays)" style="white-space:nowrap"><input type="checkbox" id="cd-yearly"> Yearly</label>
         <button class="btn btn-primary" onclick="addCountdownEvent()">Add</button>
       </div>
     </div>
@@ -1016,8 +1020,15 @@ function addCountdownEvent() {
   const name = document.getElementById('cd-name').value.trim();
   const date = document.getElementById('cd-date').value;
   if (!name || !date) { toast('Name and date required', 'err'); return; }
-  _countdownEvents.push({name, date});
+  const yearly = document.getElementById('cd-yearly').checked;
+  _countdownEvents.push(yearly ? {name, date, yearly} : {name, date});
   _renderCountdownUI();  // local redraw — no server fetch, keeps the new event
+}
+
+function toggleCountdownYearly(i) {
+  const e = _countdownEvents[i];
+  if (e.yearly) delete e.yearly; else e.yearly = true;
+  _renderCountdownUI();  // local redraw — saved with "Save Countdown Settings"
 }
 
 function removeCountdownEvent(i) {
