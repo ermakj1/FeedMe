@@ -12,8 +12,8 @@ VERSION = "1.9"
 # UP button: skip current message
 # DOWN button: clear queue
 #
-# PIR sensor on A1: display sleeps after SLEEP_TIMEOUT_SECONDS of no motion,
-# greets with "Good morning/afternoon/evening" on next detection.
+# PIR sensor on A3: display sleeps after SLEEP_TIMEOUT_SECONDS of no motion
+# and wakes on the next detection.
 
 import os
 import io
@@ -43,7 +43,6 @@ MAX_QUEUE    = 50
 DEFAULT_TTL_MINUTES   = 60
 SLEEP_TIMEOUT_SECONDS      = 300   # 5 minutes of no motion → sleep
 PIR_ENABLED                = True  # set False if PIR sensor is not connected
-GREETINGS_ENABLED          = False # disabled — greetings removed per user request
 HEARTBEAT_SECONDS          = 60    # log a heartbeat this often while sleeping
 PRESENCE_HEARTBEAT_MINUTES = 5     # send "motion" callback this often while room is occupied
 LOG_MAX_LINES         = 100
@@ -271,14 +270,16 @@ def delete_message(request: Request):
     try:
         data = json.loads(request.body)
         msg_id = int(data.get("id"))
-        _deleted_ids.add(msg_id)
         for m in message_queue:
             if m.get("id") == msg_id:
                 message_queue.remove(m)
                 log(f"Deleted [{m.get('category','')}]: {_msg_summary(m)}")
                 break
         else:
-            log(f"Deleted id={msg_id} (was playing)")
+            if current_msg is not None and current_msg.get("id") == msg_id:
+                # Can't pull it mid-render; the main loop drops it when the render ends
+                _deleted_ids.add(msg_id)
+                log(f"Deleted id={msg_id} (was playing)")
         return Response(request, '{"ok":true}', content_type="application/json")
     except Exception as e:
         return Response(request, json.dumps({"ok": False, "reason": str(e)}), content_type="application/json", status=(400, "Bad Request"))
@@ -404,24 +405,6 @@ def pir_disable(request: Request):
     global PIR_ENABLED
     PIR_ENABLED = False
     log("PIR disabled")
-    return Response(request, '{"ok":true}', content_type="application/json")
-
-@server.route("/greeting", "GET")
-def greeting_status(request: Request):
-    return Response(request, json.dumps({"greetings_enabled": GREETINGS_ENABLED}), content_type="application/json")
-
-@server.route("/greeting/enable", "POST")
-def greeting_enable(request: Request):
-    global GREETINGS_ENABLED
-    GREETINGS_ENABLED = True
-    log("Greetings enabled")
-    return Response(request, '{"ok":true}', content_type="application/json")
-
-@server.route("/greeting/disable", "POST")
-def greeting_disable(request: Request):
-    global GREETINGS_ENABLED
-    GREETINGS_ENABLED = False
-    log("Greetings disabled")
     return Response(request, '{"ok":true}', content_type="application/json")
 
 @server.route("/usb/disable", "POST")
@@ -613,12 +596,6 @@ renderers.init(display, server, pir, btn_up, btn_down, last_motion_ref, SLEEP_TI
 def clear_display():
     display.root_group = displayio.Group()
 
-def greeting_text():
-    hour = time.localtime().tm_hour
-    if 5 <= hour < 12:  return "Good morning!"
-    if 12 <= hour < 18: return "Good afternoon!"
-    return "Good evening!"
-
 def _run_interrupt():
     """Display the pending interrupt message, then clear interrupt state."""
     global _interrupt_msg
@@ -719,16 +696,6 @@ while True:
                 asleep      = False
                 sleep_start = None
                 notify_callback("person_detected")
-                if GREETINGS_ENABLED:
-                    _crumb_write("greeting")
-                    result = renderers.render_greeting(greeting_text())
-                    _crumb_clear()
-                    clear_display()
-                    if result == "sleep":
-                        asleep = True
-                    elif result == "clear":
-                        message_queue.clear()
-                        time.sleep(0.3)
             last_motion_ref[0] = time.monotonic()
 
         # Presence heartbeat — fire "motion" callback periodically while room is occupied
@@ -761,13 +728,6 @@ while True:
                 sleep_start = None
                 last_motion_ref[0] = time.monotonic()
                 notify_callback("person_detected")
-                if GREETINGS_ENABLED:
-                    _crumb_write("greeting")
-                    result = renderers.render_greeting(greeting_text())
-                    _crumb_clear()
-                    clear_display()
-                    if result == "clear":
-                        message_queue.clear()
                 time.sleep(0.3)
             server.poll()
             time.sleep(0.1)
@@ -836,10 +796,13 @@ while True:
             _crumb_clear()
             current_msg = None
             _msgs_since_clock += 1
+            was_deleted = msg.get("id") in _deleted_ids
+            _deleted_ids.discard(msg.get("id"))   # only ever holds the playing id
             clear_display()
             if result == "interrupt":
                 # Put the preempted message back at the front of the queue, then show interrupt
-                message_queue.insert(0, msg)
+                if not was_deleted:
+                    message_queue.insert(0, msg)
                 _run_interrupt()
                 continue
             elif result == "sleep":
@@ -856,7 +819,7 @@ while True:
                 max_plays = msg.get("max_plays", None)
                 still_valid = (
                     time.monotonic() < msg["expires_at"]
-                    and msg.get("id") not in _deleted_ids
+                    and not was_deleted
                     and (max_plays is None or msg["plays"] < max_plays)
                 )
                 if still_valid:
@@ -887,6 +850,7 @@ while True:
         _write_crash("main loop", e)
         _crumb_clear()
         current_msg = None
+        _deleted_ids.clear()
         if _loop_errors >= LOOP_ERRORS_BEFORE_RELOAD:
             log(f"{_loop_errors} main-loop errors in a minute — reloading")
             time.sleep(0.5)

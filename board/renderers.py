@@ -19,7 +19,6 @@ ICON_H = 16
 ICON_X = 0
 ICON_Y = (PANEL_HEIGHT - ICON_H) // 2  # = 8
 
-GREETING_COLOR = 0xFF8C00  # warm orange
 
 # Injected via init()
 _display         = None
@@ -446,8 +445,6 @@ def render_clock():
     return "done"
 
 
-def render_greeting(text):
-    return _show_text(text, GREETING_COLOR, 0x0A0500, hold_secs=4)
 
 
 def render_interrupt(text, duration=5):

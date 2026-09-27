@@ -9,6 +9,14 @@ cd "$(dirname "$0")/.."
 echo "Python syntax..."
 git ls-files '*.py' | xargs python3 -m py_compile
 
+if python3 -m pyflakes --version >/dev/null 2>&1; then
+  echo "Undefined names (pyflakes)..."
+  undefined="$(git ls-files '*.py' | xargs python3 -m pyflakes 2>&1 | grep "undefined name" || true)"
+  if [ -n "$undefined" ]; then echo "$undefined"; exit 1; fi
+else
+  echo "(pyflakes not installed — skipping undefined-name check)"
+fi
+
 echo "Director UI JavaScript syntax..."
 tmp="$(mktemp -t ui_manage.XXXXXX).js"
 trap 'rm -f "$tmp"' EXIT

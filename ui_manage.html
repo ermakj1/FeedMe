@@ -859,11 +859,6 @@ async function saveAnimations() {
 // ── Board tab ──────────────────────────────────────────────────────────────
 async function renderBoard() {
   const b = cfg;
-  let greetingsEnabled = true;
-  try {
-    const r = await fetch((b.board_url || 'http://matrixportal.local:8080') + '/greeting');
-    if (r.ok) { greetingsEnabled = (await r.json()).greetings_enabled; }
-  } catch (_) {}
   document.getElementById('tab-board').innerHTML = `
     <div class="field">
       <label>Board URL</label>
@@ -877,23 +872,8 @@ async function renderBoard() {
       <label>Callback Host (override)</label>
       <input type="text" id="b-cbhost" value="${b.callback_host || ''}" placeholder="auto-detect">
     </div>
-    <div class="toggle-row">
-      <span class="toggle-label">Greetings (Good morning/afternoon/evening)</span>
-      <label class="switch"><input type="checkbox" id="b-greetings" ${greetingsEnabled ? 'checked' : ''} onchange="toggleGreetings(this.checked)"><span class="slider"></span></label>
-    </div>
     <button class="btn btn-success btn-full" onclick="saveBoard()">Save Board Settings</button>
   `;
-}
-
-async function toggleGreetings(enabled) {
-  const boardUrl = (cfg.board_url || 'http://matrixportal.local:8080');
-  const endpoint = enabled ? '/greeting/enable' : '/greeting/disable';
-  try {
-    await fetch(boardUrl + endpoint, { method: 'POST' });
-    toast(`Greetings ${enabled ? 'enabled' : 'disabled'}`, 'ok');
-  } catch (e) {
-    toast('Could not reach board', 'err');
-  }
 }
 
 async function saveBoard() {
