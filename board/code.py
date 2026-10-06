@@ -1,4 +1,4 @@
-VERSION = "1.10"
+VERSION = "1.11"
 
 # MatrixPortal S3 - scrolling message queue with HTTP API
 #

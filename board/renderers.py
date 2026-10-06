@@ -176,6 +176,52 @@ def _hold(seconds):
     return "done"
 
 
+MARQUEE_DELAY = 0.025   # seconds per pixel for in-row scrolling (40 px/s)
+
+
+class _Marquee:
+    """One row of text inside a region: still if it fits, otherwise scrolls.
+
+    Starts left-aligned at x so the beginning is readable, then scrolls left
+    and wraps. Use when a layout has other elements on screen and can't hand
+    the whole panel to _show_text().
+    """
+    def __init__(self, text, color, x, y, width):
+        self.lbl    = label.Label(terminalio.FONT, text=text, color=color)
+        self.lbl.x  = x
+        self.lbl.y  = y
+        self.x0     = x
+        self.width  = width
+        self.text_w = len(text) * 6
+        self.moving = self.text_w > width
+
+    def step(self, px=1):
+        if self.moving:
+            self.lbl.x -= px
+            if self.lbl.x < self.x0 - self.text_w:
+                self.lbl.x = self.x0 + self.width
+
+    def pass_secs(self):
+        """Time needed to scroll the end of the text into view once."""
+        return (self.text_w - self.width) * MARQUEE_DELAY + 1 if self.moving else 0
+
+
+def _hold_marquees(seconds, marquees):
+    """Like _hold(), but scrolls any marquees that don't fit, at least one full pass."""
+    moving = [m for m in marquees if m.moving]
+    if not moving:
+        return _hold(seconds)
+    end = time.monotonic() + max(seconds, max(m.pass_secs() for m in moving))
+    while time.monotonic() < end:
+        action = _poll()
+        if action:
+            return action
+        for m in moving:
+            m.step()
+        time.sleep(MARQUEE_DELAY)
+    return "done"
+
+
 def _bg(color):
     """Return a full-panel background TileGrid in the given color."""
     bm  = displayio.Bitmap(PANEL_WIDTH, PANEL_HEIGHT, 1)
@@ -564,9 +610,9 @@ def render_weather(msg):
     icon_grp.append(icon_tile)
 
     # Static text: high, low, precip on the other half
+    bg_color = 0x000A18
     group = displayio.Group()
-    group.append(_bg(0x000A18))
-    group.append(icon_grp)
+    group.append(_bg(bg_color))
 
     def add_label(text, color, y):
         lbl = label.Label(terminalio.FONT, text=text, color=color)
@@ -575,8 +621,11 @@ def render_weather(msg):
         group.append(lbl)
 
     city = msg.get("city", "")
+    city_mq = None
     if city:
-        add_label(city[:8],           0xCCCCCC, 4)
+        # Text half is ~30px (5 chars); longer names scroll under the icon mask
+        city_mq = _Marquee(city, 0xCCCCCC, text_x, 4, 30)
+        group.append(city_mq.lbl)
         if high   is not None: add_label(f"H:{int(high)}", 0xFF8844, 14)
         if low    is not None: add_label(f"L:{int(low)}",  0x4499FF, 24)
     else:
@@ -584,17 +633,27 @@ def render_weather(msg):
         if low    is not None: add_label(f"L:{int(low)}",  0x4499FF, 13)
         if precip is not None: add_label(f"{int(precip)}%",0x44CCFF, 22)
 
+    # Opaque block behind the (transparent) icon, above the text, so a scrolling
+    # city name slides underneath the icon instead of over it
+    mask_bm  = displayio.Bitmap(32, PANEL_HEIGHT, 1)
+    mask_pal = displayio.Palette(1)
+    mask_pal[0] = bg_color
+    group.append(displayio.TileGrid(mask_bm, pixel_shader=mask_pal, x=icon_x, y=0))
+    group.append(icon_grp)
+
     _display.root_group = group
 
     state = _init_drops() if icon_type in ("rain", "storm") else \
             _init_flakes() if icon_type == "snow" else None
 
     frame = 0
-    end   = time.monotonic() + 6
+    end   = time.monotonic() + max(6, city_mq.pass_secs() if city_mq else 0)
     while time.monotonic() < end:
         action = _poll()
         if action:
             return action
+        if city_mq:
+            city_mq.step(2)   # 2px per 50ms frame = 40 px/s
         if frame % 3 == 0:
             icon_frame = frame // 3
             if   icon_type == "sun":   _draw_sun(icon_bm, icon_frame)
@@ -1219,14 +1278,14 @@ def render_bitmap(msg):
         group = displayio.Group()
         group.append(tile)
 
+        marquees = []
         if caption:
-            cap_lbl = label.Label(terminalio.FONT, text=caption[:10], color=0xFFFFFF)
-            cap_lbl.x = 1
-            cap_lbl.y = PANEL_HEIGHT - 5
-            group.append(cap_lbl)
+            cap = _Marquee(caption, 0xFFFFFF, 1, PANEL_HEIGHT - 5, PANEL_WIDTH - 1)
+            group.append(cap.lbl)
+            marquees.append(cap)
 
         _display.root_group = group
-        return _hold(8)
+        return _hold_marquees(8, marquees)
     except Exception as e:
         print(f"render_bitmap error: {e}")
         return "done"
@@ -1239,22 +1298,16 @@ def render_word(msg):
     defn  = msg.get("definition", "")
     bg    = 0x000A10
 
-    # Line 1: word (highlighted)
-    word_lbl = label.Label(terminalio.FONT, text=word[:10].upper(), color=0x00CCFF)
-    word_lbl.x = 2
-    word_lbl.y = 6
-
-    # Line 2: part of speech
-    pos_lbl = label.Label(terminalio.FONT, text=pos[:12] if pos else "", color=0x888888)
-    pos_lbl.x = 2
-    pos_lbl.y = 15
+    # Line 1: word (highlighted); line 2: part of speech. Long ones scroll.
+    word_mq = _Marquee(word.upper(), 0x00CCFF, 2, 6, PANEL_WIDTH - 2)
+    pos_mq  = _Marquee(pos or "", 0x888888, 2, 15, PANEL_WIDTH - 2)
 
     group = displayio.Group()
     group.append(_bg(bg))
-    group.append(word_lbl)
-    group.append(pos_lbl)
+    group.append(word_mq.lbl)
+    group.append(pos_mq.lbl)
     _display.root_group = group
-    result = _hold(3)
+    result = _hold_marquees(3, [word_mq, pos_mq])
     if result and result != "done":
         return result
 
