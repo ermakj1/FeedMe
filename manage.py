@@ -26,6 +26,8 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, request as freq
 
 REPO_DIR      = Path(__file__).parent.resolve()
+sys.path.insert(0, str(REPO_DIR / "feeds"))
+from util import to_ascii  # noqa: E402  (panel font is ASCII-only)
 CONFIG_PATH   = REPO_DIR / "feeds" / "config.json"
 RESTART_DELAY = 5
 WEB_PORT      = 8099
@@ -715,7 +717,7 @@ def api_hermes_push():
             return jsonify({"ok": False, "reason": "text must be a non-empty string"}), 400
         if len(text) > 200:
             return jsonify({"ok": False, "reason": "text must be 200 characters or fewer"}), 400
-        text = text.strip()
+        text = to_ascii(text.strip())
     for int_key in ("duration", "ttl"):
         if int_key in data and not isinstance(data[int_key], int):
             return jsonify({"ok": False, "reason": f"{int_key} must be an integer"}), 400

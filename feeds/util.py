@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import time
+import unicodedata
 import socket
 import urllib.error
 import urllib.request
@@ -68,16 +69,45 @@ def load_config():
     return _last_good_config
 
 
+# The panel font is ASCII-only; anything else renders as a blank box.
+_ASCII_EXTRAS = {
+    "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"',
+    "\u2013": "-", "\u2014": "-", "\u2026": "...",
+    "\u00a3": "GBP", "\u20ac": "EUR", "\u00b0": " deg",
+    "\u00e6": "ae", "\u00c6": "AE", "\u00f8": "o", "\u00d8": "O",
+    "\u00df": "ss", "\u0153": "oe", "\u0152": "OE", "\u0142": "l", "\u0141": "L",
+}
+
+def to_ascii(text):
+    """Fold text to ASCII for the panel: e-acute -> e, curly quotes -> straight, GBP sign -> GBP."""
+    if text.isascii():
+        return text
+    for old, new in _ASCII_EXTRAS.items():
+        text = text.replace(old, new)
+    decomposed = unicodedata.normalize("NFKD", text)
+    return decomposed.encode("ascii", "ignore").decode("ascii")
+
+def _ascii_payload(value):
+    if isinstance(value, str):
+        return to_ascii(value)
+    if isinstance(value, dict):
+        return {k: _ascii_payload(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_ascii_payload(v) for v in value]
+    return value
+
+
 QUEUE_FULL_RETRIES   = 2
 QUEUE_FULL_WAIT_SECS = 60
 
 def post_json(url, payload, timeout=5, retries=QUEUE_FULL_RETRIES, wait=QUEUE_FULL_WAIT_SECS):
     """POST JSON to the board and return the parsed reply.
 
+    All strings are folded to ASCII (the panel font can't draw anything else).
     If the board answers 429 (queue full), wait and retry up to `retries` times
     before re-raising. Other errors are raised immediately.
     """
-    data = json.dumps(payload).encode()
+    data = json.dumps(_ascii_payload(payload)).encode()
     for attempt in range(retries + 1):
         req = urllib.request.Request(
             url, data=data,
