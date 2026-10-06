@@ -29,6 +29,7 @@ import csv
 import html
 import io
 import random
+import unicodedata
 import argparse
 import traceback
 import urllib.request
@@ -99,7 +100,20 @@ def _clean(text):
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
+    # 4. The panel font is ASCII-only: é -> e, ñ -> n, æ -> ae, ...
+    text = _to_ascii(text)
     return text.strip()
+
+
+_ASCII_EXTRAS = {"æ": "ae", "Æ": "AE", "ø": "o", "Ø": "O", "ß": "ss", "œ": "oe", "Œ": "OE", "ł": "l", "Ł": "L"}
+
+def _to_ascii(text):
+    if text.isascii():
+        return text
+    for old, new in _ASCII_EXTRAS.items():
+        text = text.replace(old, new)
+    decomposed = unicodedata.normalize("NFKD", text)
+    return decomposed.encode("ascii", "ignore").decode("ascii")
 
 def _clue_ok(row, min_val=None, max_val=None, celebrity_only=False):
     """Return True if this TSV row is a usable clue."""

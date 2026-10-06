@@ -124,7 +124,9 @@ def _show_text(text, color, bg_color, hold_secs=3):
         2: [9, 21],
         3: [6, 15, 24],
     }
-    if len(lines) <= 3:
+    # Static only if every line fits — a single word longer than chars_per_line
+    # (e.g. "Christianity") would otherwise be clipped on both sides.
+    if len(lines) <= 3 and all(len(line) <= chars_per_line for line in lines):
         grp = displayio.Group()
         grp.append(_bg(bg_color))
         for line, y in zip(lines, y_map[len(lines)]):
@@ -1436,41 +1438,43 @@ def render_jeopardy(msg):
     ans_color   = 0x44FF88   # green
 
     # ── Phase 1: category name + dollar value ─────────────────────────────────
-    cat_text = category[:10]  # truncate long category names for header
-    cat_w    = len(cat_text) * 6
+    # Category on 1-2 centred lines when it fits; otherwise scroll it across the
+    # top while the value stays put underneath.
+    chars    = PANEL_WIDTH // 6
+    cat_lines = _wrap(category, chars)
+    fits     = len(cat_lines) <= 2 and all(len(l) <= chars for l in cat_lines)
     val_text = f"${value}" if value else "JEOPARDY"
-    val_w    = len(val_text) * 6
-
-    cat_lbl = label.Label(terminalio.FONT, text=cat_text, color=cat_color)
-    cat_lbl.x = max(0, (PANEL_WIDTH - cat_w) // 2)
-    cat_lbl.y = 9
-
-    val_lbl = label.Label(terminalio.FONT, text=val_text, color=val_color)
-    val_lbl.x = max(0, (PANEL_WIDTH - val_w) // 2)
-    val_lbl.y = 22
 
     grp = displayio.Group()
     grp.append(_bg(bg))
-    grp.append(cat_lbl)
+
+    if fits:
+        cat_ys = [9] if len(cat_lines) == 1 else [6, 15]
+        for line, y in zip(cat_lines, cat_ys):
+            lbl = label.Label(terminalio.FONT, text=line, color=cat_color)
+            lbl.x = (PANEL_WIDTH - len(line) * 6) // 2
+            lbl.y = y
+            grp.append(lbl)
+        val_y = 22 if len(cat_lines) == 1 else 25
+    else:
+        cat_lbl = label.Label(terminalio.FONT, text=category, color=cat_color)
+        cat_lbl.x = PANEL_WIDTH
+        cat_lbl.y = 9
+        grp.append(cat_lbl)
+        val_y = 22
+
+    val_lbl = label.Label(terminalio.FONT, text=val_text, color=val_color)
+    val_lbl.x = max(0, (PANEL_WIDTH - len(val_text) * 6) // 2)
+    val_lbl.y = val_y
     grp.append(val_lbl)
     _display.root_group = grp
 
-    # Scroll category if it doesn't fit, otherwise hold
-    if cat_w > PANEL_WIDTH:
-        cat_lbl.x = PANEL_WIDTH
-        end = time.monotonic() + 2.5
-        while time.monotonic() < end:
-            action = _poll()
-            if action:
-                return action
-            cat_lbl.x -= 1
-            if cat_lbl.x < -cat_w:
-                cat_lbl.x = PANEL_WIDTH
-            time.sleep(SCROLL_DELAY)
-    else:
+    if fits:
         result = _hold(2.5)
-        if result and result != "done":
-            return result
+    else:
+        result = _scroll_label(cat_lbl)   # one full pass so the whole name is read
+    if result and result != "done":
+        return result
 
     # ── Phase 2: the clue ─────────────────────────────────────────────────────
     result = _show_text(clue, clue_color, bg, hold_secs=3)
